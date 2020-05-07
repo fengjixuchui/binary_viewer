@@ -22,17 +22,21 @@
 
 #include <QDialog>
 
+class OverallView;
+
+class Histogram2dView;
+
 class ImageView;
 
-class ImageView2;
-
-class ImageView3;
+class BinaryViewer;
 
 class DotPlot;
 
-class View3D;
+class Histogram3dView;
 
-class GraphView;
+class PlotView;
+
+class QComboBox;
 
 class QLabel;
 
@@ -66,14 +70,17 @@ protected slots:
     bool nextFile();
 
 protected:
-    ImageView *iv1_;
-    ImageView *iv2_;
-    GraphView *iv2e_;
-    ImageView2 *iv2d_;
-    ImageView3 *iv2d2_;
-    DotPlot *dot_plot_;
-    View3D *v3d_;
+    QComboBox *cur_view_;
     std::vector<QWidget *> views_;
+
+    OverallView *overall_primary_;
+    OverallView *overall_zoomed_;
+    PlotView *plot_view_;
+    Histogram2dView *histogram_2d_;
+    BinaryViewer *binary_viewer_;
+    ImageView *image_view_;
+    DotPlot *dot_plot_;
+    Histogram3dView *histogram_3d_;
 
     QLabel *filename_;
     QStringList files_;

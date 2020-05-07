@@ -26,27 +26,23 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QPushButton>
+#include <QSettings>
 
 #include "main_app.h"
+#include "binary_viewer.h"
+#include "overall_view.h"
+#include "histogram_2d_view.h"
 #include "image_view.h"
-#include "image_view2.h"
-#include "image_view3.h"
 #include "dot_plot.h"
-#include "view_3d.h"
-#include "graph_view.h"
-#include "histogram.h"
+#include "histogram_3d_view.h"
+#include "plot_view.h"
+#include "histogram_calc.h"
 
 static int scroller_w = 16 * 8;
 
 
 MainApp::MainApp(QWidget *p)
         : QDialog(p), cur_file_(-1), bin_(nullptr), bin_len_(0), start_(0), end_(0) {
-    if (1) {
-        QPalette pal = palette();
-        pal.setBrush(QPalette::Background, QBrush(Qt::black));
-        setPalette(pal);
-    }
-
     done_flag_ = false;
 
     auto top_layout = new QGridLayout;
@@ -75,23 +71,23 @@ MainApp::MainApp(QWidget *p)
     }
 
     {
-        iv1_ = new ImageView;
-        iv2_ = new ImageView;
-        iv2e_ = new GraphView;
+        overall_primary_ = new OverallView;
+        overall_zoomed_ = new OverallView;
+        plot_view_ = new PlotView;
 
-        connect(iv1_, SIGNAL(rangeSelected(float, float)), SLOT(rangeSelected(float, float)));
+        connect(overall_primary_, SIGNAL(rangeSelected(float, float)), SLOT(rangeSelected(float, float)));
 
-        iv1_->setFixedWidth(scroller_w);
-        iv2_->setFixedWidth(scroller_w);
-        iv2e_->setFixedWidth(scroller_w);
+        overall_primary_->setFixedWidth(scroller_w);
+        overall_zoomed_->setFixedWidth(scroller_w);
+        plot_view_->setFixedWidth(scroller_w);
 
-        iv2_->enableSelection(false);
-        iv2e_->enableSelection(false);
+        overall_zoomed_->enableSelection(false);
+        plot_view_->enableSelection(false);
 
         auto layout = new QHBoxLayout;
-        layout->addWidget(iv1_);
-        layout->addWidget(iv2_);
-        layout->addWidget(iv2e_);
+        layout->addWidget(overall_primary_);
+        layout->addWidget(overall_zoomed_);
+        layout->addWidget(plot_view_);
         top_layout->addLayout(layout, 1, 0);
     }
 
@@ -99,14 +95,15 @@ MainApp::MainApp(QWidget *p)
         auto layout = new QHBoxLayout;
 
         {
-            auto pb = new QComboBox();
-            pb->addItem("3D correlation");
-            pb->addItem("2D correlation");
-            pb->addItem("Image view");
-            pb->addItem("Dot plot");
-            pb->setFixedSize(pb->sizeHint());
-            connect(pb, SIGNAL(currentIndexChanged(int)), SLOT(switchView(int)));
-            layout->addWidget(pb);
+            cur_view_ = new QComboBox();
+            cur_view_->addItem("3D histogram");
+            cur_view_->addItem("2D histogram");
+            cur_view_->addItem("Binary view");
+            cur_view_->addItem("Image view");
+            cur_view_->addItem("Dot plot");
+            cur_view_->setFixedSize(cur_view_->sizeHint());
+            connect(cur_view_, SIGNAL(currentIndexChanged(int)), SLOT(switchView(int)));
+            layout->addWidget(cur_view_);
         }
         {
             filename_ = new QLabel();
@@ -117,14 +114,16 @@ MainApp::MainApp(QWidget *p)
     }
 
     {
-        v3d_ = new View3D;
-        iv2d_ = new ImageView2;
-        iv2d2_ = new ImageView3;
+        histogram_3d_ = new Histogram3dView;
+        histogram_2d_ = new Histogram2dView;
+        binary_viewer_ = new BinaryViewer;
+        image_view_ = new ImageView;
         dot_plot_ = new DotPlot;
 
-        views_.push_back(v3d_);
-        views_.push_back(iv2d_);
-        views_.push_back(iv2d2_);
+        views_.push_back(histogram_3d_);
+        views_.push_back(histogram_2d_);
+        views_.push_back(binary_viewer_);
+        views_.push_back(image_view_);
         views_.push_back(dot_plot_);
 
         auto layout = new QHBoxLayout;
@@ -135,10 +134,7 @@ MainApp::MainApp(QWidget *p)
         top_layout->addLayout(layout, 1, 1);
     }
 
-    v3d_->show();
-    iv2d_->hide();
-    iv2d2_->hide();
-    dot_plot_->hide();
+    switchView(-1);
 
     setLayout(top_layout);
 }
@@ -240,34 +236,39 @@ void MainApp::loadFile() {
 }
 
 void MainApp::update_views(bool update_iv1) {
-    if (update_iv1) iv1_->clear();
+    if (update_iv1) overall_primary_->clear();
 
     if (bin_ == nullptr) return;
 
     // iv1 shows the entire file, iv2 shows the current segment
-    if (update_iv1) iv1_->set_data(bin_ + 0, bin_len_);
-    iv2_->set_data(bin_ + start_, end_ - start_);
+    if (update_iv1) overall_primary_->set_data(bin_ + 0, bin_len_);
+    overall_zoomed_->set_data(bin_ + start_, end_ - start_);
 
     {
         long n;
-        float *dd = generate_entropy(bin_ + start_, end_ - start_, n);
-        if (dd != nullptr) {
-            iv2e_->set_data(0, dd, n);
+        auto dd = generate_entropy(bin_ + start_, end_ - start_, n);
+        if (dd) {
+            plot_view_->set_data(0, dd, n);
             delete[] dd;
         }
     }
 
     {
-        float *dd = generate_histo(bin_ + start_, end_ - start_);
-        if (dd != nullptr) {
-            iv2e_->set_data(1, dd, 256, false);
+        auto dd = generate_histo(bin_ + start_, end_ - start_);
+        if (dd) {
+            plot_view_->set_data(1, dd, 256, false);
             delete[] dd;
         }
     }
 
-    if (v3d_->isVisible()) v3d_->setData(bin_ + start_, end_ - start_);
-    if (iv2d_->isVisible()) iv2d_->setData(bin_ + start_, end_ - start_);
-    if (iv2d2_->isVisible()) iv2d2_->setData(bin_ + start_, end_ - start_);
+    if (histogram_3d_->isVisible()) histogram_3d_->setData(bin_ + start_, end_ - start_);
+    if (histogram_2d_->isVisible()) histogram_2d_->setData(bin_ + start_, end_ - start_);
+    if (binary_viewer_->isVisible()) {
+//        binary_viewer_->setData(bin_ + start_, end_ - start_);
+        binary_viewer_->setData(bin_, end_);
+        binary_viewer_->setStart(start_ / 16);
+    }
+    if (image_view_->isVisible()) image_view_->setData(bin_ + start_, end_ - start_);
     if (dot_plot_->isVisible()) dot_plot_->setData(bin_ + start_, end_ - start_);
 }
 
@@ -281,6 +282,20 @@ void MainApp::switchView(int ind) {
     for (const auto &j : views_) {
         j->hide();
     }
+
+    {
+        QSettings settings;
+        if (ind == -1) {
+            ind = settings.value("last_view", 0).toInt();
+        }
+        ind = std::max(ind, 0);
+        ind = std::min(ind, int(views_.size() - 1));
+        settings.setValue("last_view", ind);
+        cur_view_->blockSignals(true);
+        cur_view_->setCurrentIndex(ind);
+        cur_view_->blockSignals(false);
+    }
+
     views_[ind]->show();
     update_views(false);
 }
